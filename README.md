@@ -1,7 +1,6 @@
 # LuaDebuggerX
 
-Lua debugger base on frida/lua-debug.
-This library will expand on lua-debug.
+Lua debugger base on [devcat-studio/VSCodeLuaDebug](https://github.com/devcat-studio/VSCodeLuaDebug)/[actboy168/lua-debug](https://github.com/actboy168/lua-debug)
 
 ## What difference with lua-debug
 

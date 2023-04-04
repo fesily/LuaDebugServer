@@ -1,0 +1,6 @@
+[submodule "3rd/luamake"]
+	path = 3rd/luamake
+	url = https://github.com/actboy168/luamake
+[submodule "3rd/lua-debug"]
+	path = 3rd/lua-debug
+	url = https://github.com/actboy168/lua-debug
