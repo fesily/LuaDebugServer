@@ -32,3 +32,7 @@ This library will expand on lua-debug.
 - [ ] mixed lua api/source
 - [ ] pure lua source
 - [ ] lldb/gdb
+
+## Luajit Future
+
+- [ ] Support jit mode debugger
