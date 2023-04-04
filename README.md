@@ -16,6 +16,7 @@ This library will expand on lua-debug.
 
 ## Future
 
+- [ ] Support sethalt
 - [ ] Support Coroutine
 - [ ] Support Exception
 - [ ] Adaptive Architecture debugger
