@@ -1,0 +1,25 @@
+/.vscode/ipch/
+/.vscode/c_cpp_properties.json
+/.vs/
+/publish/
+/build/
+/extension/package.json
+.DS_Store
+.idea/
+/.claude/
+/.cache/
+
+# Vendored/downloaded test dependencies
+/test/dap-node/node_modules/
+
+# Test artifacts
+/e2e_trace.txt
+/test/e2e/.trace/
+/test/e2e/.inject/
+/test/e2e/stderr.log
+__pycache__/
+
+# Downloaded and extracted third-party sources (cmake/FetchDep.cmake): Boost, fmt
+# and the Frida devkits. Shared between build trees, never committed.
+/3rd/_deps/
+/3rd/_cache/

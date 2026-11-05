@@ -1,0 +1,266 @@
+# The whole pipeline, in one workflow and in dependency order:
+#
+#   style ─┐
+#   build ─┴─> e2e ─> publish (master only)
+#
+# `build` compiles and runs the native tests on each platform, then packs the
+# runtime, the bridge libraries and the native test hosts into one artifact.
+# `e2e` consumes exactly that artifact (no rebuild, so the suites run against the
+# binaries that were built and tested) and drives the DAP suites plus the VS Code
+# DAP client tests. `publish` only runs after both are green.
+#
+# Every command comes from `tools/ci.py`, the same script a developer runs:
+#   python3 tools/ci.py --preset darwin-arm64-release all
+# so the suite lists, version sets and timeouts cannot drift between the two.
+#
+# Windows is absent on purpose: there is no environment to validate it, and the
+# native test targets are POSIX-only. It stays a documented gap rather than a job
+# that fails for reasons nobody can act on.
+
+name: ci
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  # The e2e matrix leans on real injection and on hosted-runner images; a nightly
+  # run catches drift without slowing every push down.
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # One formatter version everywhere; `tools/format.py` refuses another major.
+  CLANG_FORMAT_VERSION: "23.1.5"
+
+jobs:
+  style:
+    name: style
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the pinned formatter
+        run: |
+          python -m pip install --upgrade "clang-format==${CLANG_FORMAT_VERSION}"
+          clang-format --version
+      - name: Check formatting
+        run: python3 tools/ci.py style
+
+  build:
+    name: build (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ubuntu 26.04 LTS ships clang 21 (what the presets pin) and CMake
+          # 4.2.3 (satisfies the `4.2...4.4` floor), so CI and a developer
+          # container use the same toolchain.
+          - os: ubuntu-26.04
+            platform: linux-x64
+            preset: linux-x64-release
+          - os: ubuntu-26.04-arm
+            platform: linux-arm64
+            preset: linux-arm64-release
+          - os: macos-latest
+            platform: darwin-arm64
+            preset: darwin-arm64-release
+          - os: macos-15-intel
+            platform: darwin-x64
+            preset: darwin-x64-release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Environment flags
+        id: env
+        shell: bash
+        run: |
+          case "${{ matrix.platform }}" in
+            linux-*) echo "linux=1" >> "$GITHUB_OUTPUT" ;;
+            darwin-*) echo "darwin=1" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Install the Linux toolchain
+        if: steps.env.outputs.linux == '1'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-21 ninja-build cmake python3
+          clang-21 --version
+          cmake --version
+          ninja --version
+
+      - uses: actions/setup-python@v5
+        if: steps.env.outputs.darwin == '1'
+        with:
+          python-version: "3.12"
+      - name: Install CMake and Ninja
+        if: steps.env.outputs.darwin == '1'
+        run: |
+          python -m pip install --upgrade cmake ninja
+          cmake --version && ninja --version
+      # The toolchain gate (`cmake/ToolchainChecks.cmake`) requires the C++26
+      # language mode with working coroutines, so the newest Xcode is selected
+      # instead of relying on the image default.
+      - name: Select the newest Xcode
+        if: steps.env.outputs.darwin == '1'
+        run: |
+          newest="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          echo "using ${newest}"
+          sudo xcode-select -s "${newest}"
+          xcrun --find clang
+          clang --version
+
+      # The archives are SHA256-pinned and the download retries, but a cold matrix
+      # still fetches ~120 MB per job. `3rd/_deps` holds the archives plus the
+      # extracted sources (Boost, fmt, the Frida devkits); the build tree's `_deps`
+      # holds the Boost object files and libraries, which dominate a clean build.
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            3rd/_deps
+            build/cmake/${{ matrix.preset }}/_deps
+          key: deps-${{ matrix.platform }}-${{ hashFiles('cmake/Dependencies.cmake', 'cmake/FetchDep.cmake', 'cmake/Frida.cmake', 'cmake/LuaTargets.cmake') }}
+          restore-keys: |
+            deps-${{ matrix.platform }}-
+
+      - name: Configure
+        run: python3 tools/ci.py --preset ${{ matrix.preset }} configure
+      - name: Build
+        run: python3 tools/ci.py --preset ${{ matrix.preset }} build
+      # 46 cases: bridge binding (symbol tables, resolvers, identity, stripped
+      # hosts), VM-source rules, hooks, value store, evaluator, session routing,
+      # loader checks. `waitdll` reports itself as skipped on platforms where
+      # `wait_dll()` is unimplemented.
+      - name: Native tests
+        run: python3 tools/ci.py --preset ${{ matrix.preset }} ctest
+      - name: Package the runtime for the e2e stage
+        run: python3 tools/ci.py --preset ${{ matrix.preset }} package --artifact ci-${{ matrix.platform }}.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.platform }}
+          path: ci-${{ matrix.platform }}.tar.gz
+          retention-days: 7
+
+  e2e:
+    name: e2e (${{ matrix.platform }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-26.04
+            platform: linux-x64
+            preset: linux-x64-release
+          - os: ubuntu-26.04-arm
+            platform: linux-arm64
+            preset: linux-arm64-release
+          - os: macos-latest
+            platform: darwin-arm64
+            preset: darwin-arm64-release
+          - os: macos-15-intel
+            platform: darwin-x64
+            preset: darwin-x64-release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The binaries come from the build job: this stage tests what was built.
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-${{ matrix.platform }}
+      - name: Unpack the built runtime
+        run: python3 tools/ci.py --preset ${{ matrix.preset }} unpack --artifact ci-${{ matrix.platform }}.tar.gz
+
+      - name: Relax the ptrace scope (Linux)
+        if: startsWith(matrix.platform, 'linux')
+        run: |
+          sudo sysctl -w kernel.yama.ptrace_scope=0 \
+            || echo "ptrace scope left unchanged; the privileged suites will report it"
+
+      # Pure suites debug a target the adapter starts itself: baseline, core,
+      # two-sources and vm-source (console RVA rule, terminal carrier, symbols
+      # file, injected pid attach, five refusals) on all seven interpreters.
+      - name: e2e - pure suites
+        run: python3 tools/ci.py --preset ${{ matrix.preset }} e2e-pure
+      # full-surface (exception stops) and multi-VM (two ABI groups in one process).
+      - name: e2e - full surface and multi-VM
+        run: python3 tools/ci.py --preset ${{ matrix.preset }} e2e-surface
+      # Preload launch into a child we start: no privileges needed.
+      - name: e2e - launch by preload
+        run: python3 tools/ci.py --preset ${{ matrix.preset }} e2e-inject
+      # VS Code's own DebugClient against the native adapter.
+      - name: DAP client integration
+        run: python3 tools/ci.py --preset ${{ matrix.preset }} dap
+
+      # Attaching to a process the adapter did not spawn needs ptrace (Linux YAMA)
+      # or the frida entitlement (macOS). Reported, not gating: a sandbox that
+      # refuses is not a defect in the debugger, and the script prints exactly
+      # which case skipped.
+      - name: e2e - attach and environment-only join (reported)
+        continue-on-error: true
+        run: python3 tools/ci.py --preset ${{ matrix.preset }} e2e-privileged
+
+      - name: Upload e2e logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs-${{ matrix.platform }}
+          path: |
+            test/e2e/stderr.log
+            test/e2e/.trace/**
+          if-no-files-found: ignore
+
+  publish:
+    name: publish (${{ matrix.platform }})
+    needs: [build, e2e]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: win32-x64
+          - platform: linux-x64
+          - platform: linux-arm64
+          - platform: darwin-x64
+          - platform: darwin-arm64
+    steps:
+      - uses: actions/checkout@v4
+      # Windows has no build artifact (no job), so its marketplace upload is
+      # skipped below; the other four come from the build stage.
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: build-${{ matrix.platform }}
+      - run: |
+          python3 tools/ci.py --preset ${{ matrix.platform }}-release unpack \
+            --artifact ci-${{ matrix.platform }}.tar.gz || true
+      - run: npm install -g @vscode/vsce ovsx
+      # A fresh repository has no marketplace secrets; a failed upload must not
+      # pretend the tests failed.
+      - run: npx vsce publish --target ${{ matrix.platform }} -p ${{ secrets.VSCE_KEY }}
+        working-directory: publish
+        continue-on-error: true
+      - run: npx ovsx publish --target ${{ matrix.platform }} -p ${{ secrets.OVSX_KEY }}
+        working-directory: publish
+        continue-on-error: true

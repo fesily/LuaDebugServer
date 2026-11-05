@@ -1,0 +1,16 @@
+{
+    "lua.debug.launch.console.description": "The specified console to launch the program.",
+    "lua.debug.launch.console.internalConsole.description": "VS Code debug console (input stream not supported).",
+    "lua.debug.launch.console.integratedTerminal.description": "VS Code integrated terminal.",
+    "lua.debug.launch.console.externalTerminal.description": "External terminal that can be configured in user settings.",
+    "lua.debug.launch.luaVersion.description": "Lua ABI of the debuggee. `auto` (the default) lets the debugger detect it in the target; any other value is a constraint the detected ABI must satisfy, and a conflict is refused. Detection needs evidence: a symbol table that only names APIs shared by Lua 5.4 and 5.5 cannot pick between them, so an explicit version is then required. It only selects the bundled `runtime/<platform>/<version>/lua` when the adapter starts one; it says nothing about an externally supplied VM.",
+    "lua.debug.launch.luaVersion.auto.description": "Detect the ABI from the running VM. A binary that exports nothing needs a symbol table or an explicit version.",
+    "lua.debug.launch.vmSource.description": "Optional description of the debuggee's Lua implementation for binaries that export nothing (statically linked, stripped, or hidden symbols).",
+    "lua.debug.launch.luaBinary.description": "Path or file name of the *already loaded* Lua image to debug. Only selects among mapped modules: the full path or the file name must match exactly, nothing is loaded to satisfy it, and a file name that matches two modules is an error. Leave it unset to keep automatic discovery.",
+    "lua.debug.launch.luaSymbols.description": "Optional description of the debuggee's Lua implementation for binaries that export nothing (statically linked, stripped, or hidden symbols). Each entry takes exactly one of `address` (absolute hexadecimal address in the current process; re-derive it after every restart), `offset` (non-negative hexadecimal RVA from the loaded `luaBinary` base, not a file offset; requires `luaBinary`) or `pattern` (Gum pattern such as `FD 7B ?? A9`, which must match exactly once). Only known symbol names are accepted, so a typo is rejected instead of ignored. Mutually exclusive with `luaSymbolsFile`; a large table is written to a temporary file by the adapter.",
+    "lua.debug.launch.luaSymbolsFile.description": "UTF-8 JSON file holding the same object as `luaSymbols`, read by the target process. Mutually exclusive with `luaSymbols`. Use it for tables too large to inline.",
+    "lua.debug.launch.luaArch.description": "Default lua arch.",
+    "lua.debug.launch.sourceCoding.description": "Source encoding.",
+    "lua.debug.launch.path.description": "Search path for Lua programs",
+    "lua.debug.launch.cpath.description": "Search path for native libraries"
+}

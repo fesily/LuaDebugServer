@@ -1,0 +1,103 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "type": "shell",
+    "windows": {
+        "options": {
+            "shell": {
+                "executable": "C:\\Windows\\System32\\cmd.exe",
+                "args": [
+                    "/c"
+                ]
+            }
+        }
+    },
+    "options": {
+        "cwd": "${workspaceFolder}"
+    },
+    "tasks": [
+        {
+            "label": "Configure",
+            "windows": {
+                "command": "cmake --preset win32-x64-release"
+            },
+            "linux": {
+                "command": "cmake --preset linux-x64-release"
+            },
+            "osx": {
+                "command": "cmake --preset darwin-arm64-release"
+            }
+        },
+        {
+            "label": "Build",
+            "dependsOn": "Configure",
+            "windows": {
+                "command": "cmake --build --preset win32-x64-release"
+            },
+            "linux": {
+                "command": "cmake --build --preset linux-x64-release"
+            },
+            "osx": {
+                "command": "cmake --build --preset darwin-arm64-release"
+            }
+        },
+        {
+            "label": "Test",
+            "dependsOn": "Build",
+            "windows": {
+                "command": "ctest --preset win32-x64-release"
+            },
+            "linux": {
+                "command": "ctest --preset linux-x64-release"
+            },
+            "osx": {
+                "command": "ctest --preset darwin-arm64-release"
+            }
+        },
+        {
+            "label": "Clang Format",
+            "command": "python3",
+            "args": [
+                "tools/format.py"
+            ]
+        },
+        {
+            "label": "Install Extension",
+            "command": "python3",
+            "args": [
+                "tools/install_extension.py",
+                "publish",
+                "${extensionInstallFolder:fesily.lua-debug-server}"
+            ]
+        },
+        {
+            "label": "Run Native Adapter",
+            "type": "process",
+            "command": "${workspaceFolder}/publish/bin/lua-debug",
+            "windows": {
+                "command": "${workspaceFolder}/publish/bin/lua-debug.exe"
+            },
+            "linux": {
+                "command": "${workspaceFolder}/publish/bin/lua-debug"
+            },
+            "osx": {
+                "command": "${workspaceFolder}/publish/bin/lua-debug"
+            },
+            "args": [
+                "4711"
+            ],
+            "isBackground": true,
+            "problemMatcher": []
+        },
+        {
+            "label": "Copy Publish",
+            "command": "python3",
+            "args": [
+                "tools/install_extension.py",
+                "publish",
+                "${extensionInstallFolder:fesily.lua-debug-server}"
+            ]
+        }
+    ]
+}

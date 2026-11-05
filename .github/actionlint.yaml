@@ -1,0 +1,11 @@
+# runner-image labels newer than actionlint's built-in list.
+#
+# actionlint ships a snapshot of GitHub's hosted-runner labels; the images listed
+# here exist in `actions/runner-images` but not yet in that snapshot, so linting
+# would report them as unknown. Declaring them keeps `actionlint` useful for real
+# mistakes without weakening the checks it can still make.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
+    - ubuntu-26.04-arm
+    - macos-15-intel

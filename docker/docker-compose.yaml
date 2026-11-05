@@ -1,0 +1,68 @@
+# Linux verification for both architectures, driven by `tools/docker-ci.sh`.
+#
+#   tools/docker-ci.sh --arch arm64            # configure build ctest e2e-pure
+#   tools/docker-ci.sh --arch amd64
+#   tools/docker-ci.sh --arch both
+#   tools/docker-ci.sh --arch arm64 -- e2e-surface dap
+#
+# Two services instead of one parameterised by platform: the platform has to be
+# fixed per service, and keeping them side by side makes "the other architecture"
+# a one-word choice.
+#
+# The services reference an image by name and carry no `build:` section: the image
+# is produced by `docker build --platform ...` in tools/docker-ci.sh. Letting compose
+# build it instead tags the *host* architecture, and the subsequent `run` then fails
+# with "does not provide the specified platform".
+#
+# Volume layout, per architecture:
+#   /repo   the checkout, read-only. The container never builds in it: its
+#           `3rd/_deps` holds host-architecture artefacts, and the submodule `.git`
+#           entries point outside the tree.
+#   /work   the working copy and its build tree, kept between runs so a rebuild is
+#           incremental. The entrypoint re-syncs the sources on every run, so edits
+#           are always picked up.
+#   /deps   LUA_DEBUG_DEP_CACHE: the pinned archives and the extracted sources.
+#
+# `cap_add: SYS_PTRACE` + `seccomp:unconfined` are what the `attach` and
+# `inject-config` suites need (frida and the launcher ptrace the debuggee). The
+# container runs as root, so YAMA's scope does not block them either.
+
+name: lua-debug
+
+x-common: &common
+  init: true
+  # The suites spawn interpreters, inject into them and kill them; a stray child
+  # must not keep the container alive.
+  stop_grace_period: 5s
+  cap_add:
+    - SYS_PTRACE
+  security_opt:
+    - seccomp:unconfined
+
+services:
+  arm64:
+    <<: *common
+    image: lua-debug-arm64
+    platform: linux/arm64
+    volumes:
+      - ..:/repo:ro
+      - work-arm64:/work
+      - deps-arm64:/deps
+
+  amd64:
+    <<: *common
+    image: lua-debug-amd64
+    platform: linux/amd64
+    volumes:
+      - ..:/repo:ro
+      - work-amd64:/work
+      - deps-amd64:/deps
+
+volumes:
+  # One cache per architecture: the archives are architecture-independent, but the
+  # extracted Frida devkits and the Boost libraries are not. `work-*` exists per
+  # architecture for the same reason (different build trees entirely).
+  deps-arm64:
+  deps-amd64:
+  work-arm64:
+  work-amd64:

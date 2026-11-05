@@ -1,0 +1,9 @@
+# Downloaded frida-core devkits (compile/download_deps.lua). Never committed.
+*.tar.xz
+*.exe
+*.a
+*.lib
+*.h
+*.gir
+.frida-version
+*.c

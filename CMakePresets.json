@@ -1,0 +1,250 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": {
+        "major": 4,
+        "minor": 2,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "base",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/cmake/${presetName}",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "LUA_DEBUG_BUILD_TESTS": "ON",
+                "LUA_DEBUG_BUILD_COMPANION": "ON"
+            }
+        },
+        {
+            "name": "base-debug",
+            "hidden": true,
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "darwin-arm64-release",
+            "displayName": "macOS arm64 (release)",
+            "inherits": "base",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            },
+            "cacheVariables": {
+                "LUA_DEBUG_DIST_PLATFORM": "darwin-arm64",
+                "CMAKE_OSX_ARCHITECTURES": "arm64",
+                "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++"
+            }
+        },
+        {
+            "name": "darwin-arm64-debug",
+            "displayName": "macOS arm64 (debug)",
+            "inherits": "base-debug",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            },
+            "cacheVariables": {
+                "LUA_DEBUG_DIST_PLATFORM": "darwin-arm64",
+                "CMAKE_OSX_ARCHITECTURES": "arm64",
+                "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++"
+            }
+        },
+        {
+            "name": "darwin-x64-release",
+            "displayName": "macOS x64 (release)",
+            "inherits": "base",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            },
+            "cacheVariables": {
+                "LUA_DEBUG_DIST_PLATFORM": "darwin-x64",
+                "CMAKE_OSX_ARCHITECTURES": "x86_64",
+                "CMAKE_OSX_DEPLOYMENT_TARGET": "10.15",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++"
+            }
+        },
+        {
+            "name": "darwin-x64-debug",
+            "displayName": "macOS x64 (debug)",
+            "inherits": "base-debug",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            },
+            "cacheVariables": {
+                "LUA_DEBUG_DIST_PLATFORM": "darwin-x64",
+                "CMAKE_OSX_ARCHITECTURES": "x86_64",
+                "CMAKE_OSX_DEPLOYMENT_TARGET": "10.15",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++"
+            }
+        },
+        {
+            "name": "linux-x64-release",
+            "displayName": "Linux x64 (release)",
+            "inherits": "base",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            },
+            "cacheVariables": {
+                "LUA_DEBUG_DIST_PLATFORM": "linux-x64",
+                "CMAKE_C_COMPILER": "clang-21",
+                "CMAKE_CXX_COMPILER": "clang++-21"
+            }
+        },
+        {
+            "name": "linux-arm64-release",
+            "displayName": "Linux arm64 (release)",
+            "inherits": "base",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            },
+            "cacheVariables": {
+                "LUA_DEBUG_DIST_PLATFORM": "linux-arm64",
+                "CMAKE_C_COMPILER": "clang-21",
+                "CMAKE_CXX_COMPILER": "clang++-21"
+            }
+        },
+        {
+            "name": "win32-x64-release",
+            "displayName": "Windows x86 adapter + x64 runtime (release)",
+            "inherits": "base",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            },
+            "cacheVariables": {
+                "LUA_DEBUG_DIST_PLATFORM": "win32-x64",
+                "LUA_DEBUG_PLATFORM": "win32-ia32",
+                "CMAKE_C_COMPILER": "clang-cl",
+                "CMAKE_CXX_COMPILER": "clang-cl"
+            }
+        },
+        {
+            "name": "win32-x64-debug",
+            "displayName": "Windows x86 adapter + x64 runtime (debug)",
+            "inherits": "base-debug",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            },
+            "cacheVariables": {
+                "LUA_DEBUG_DIST_PLATFORM": "win32-x64",
+                "LUA_DEBUG_PLATFORM": "win32-ia32",
+                "CMAKE_C_COMPILER": "clang-cl",
+                "CMAKE_CXX_COMPILER": "clang-cl"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "darwin-arm64-release",
+            "configurePreset": "darwin-arm64-release"
+        },
+        {
+            "name": "darwin-arm64-debug",
+            "configurePreset": "darwin-arm64-debug"
+        },
+        {
+            "name": "darwin-x64-release",
+            "configurePreset": "darwin-x64-release"
+        },
+        {
+            "name": "darwin-x64-debug",
+            "configurePreset": "darwin-x64-debug"
+        },
+        {
+            "name": "linux-x64-release",
+            "configurePreset": "linux-x64-release"
+        },
+        {
+            "name": "linux-arm64-release",
+            "configurePreset": "linux-arm64-release"
+        },
+        {
+            "name": "win32-x64-release",
+            "configurePreset": "win32-x64-release"
+        },
+        {
+            "name": "win32-x64-debug",
+            "configurePreset": "win32-x64-debug"
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "darwin-arm64-release",
+            "configurePreset": "darwin-arm64-release",
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "noTestsAction": "error",
+                "timeout": 300
+            }
+        },
+        {
+            "name": "darwin-arm64-debug",
+            "configurePreset": "darwin-arm64-debug",
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "noTestsAction": "error",
+                "timeout": 300
+            }
+        },
+        {
+            "name": "darwin-x64-release",
+            "configurePreset": "darwin-x64-release",
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "noTestsAction": "error",
+                "timeout": 300
+            }
+        },
+        {
+            "name": "linux-x64-release",
+            "configurePreset": "linux-x64-release",
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "noTestsAction": "error",
+                "timeout": 300
+            }
+        },
+        {
+            "name": "linux-arm64-release",
+            "configurePreset": "linux-arm64-release",
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "noTestsAction": "error",
+                "timeout": 300
+            }
+        }
+    ]
+}

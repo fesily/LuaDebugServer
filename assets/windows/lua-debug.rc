@@ -1,0 +1,2 @@
+#include "Windows.h"
+10086 ICON "assets/windows/lua-debug.ico"

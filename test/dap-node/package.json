@@ -1,0 +1,18 @@
+{
+  "name": "lua-debug-dap-integration",
+  "version": "1.0.0",
+  "description": "DAP integration tests for the native lua-debug adapter (debugadapter-testsupport)",
+  "main": "index.js",
+  "scripts": {
+    "test": "mocha --reporter spec dap.test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@vscode/debugadapter-testsupport": "^1.68.0",
+    "mocha": "^12.0.3"
+  },
+  "private": true
+}

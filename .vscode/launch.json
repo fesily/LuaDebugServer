@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "extensionHost",
+            "request": "launch",
+            "name": "Test Extension",
+            "runtimeExecutable": "${execPath}",
+            "args": [
+                "--extensionDevelopmentPath=${workspaceFolder}/extension/"
+            ],
+            "env": {
+                "VSCODE_EXTENSION_PATH" : "${extensionInstallFolder:fesily.lua-debug-server}"
+            }
+        }
+    ]
+}

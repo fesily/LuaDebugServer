@@ -1,0 +1,6 @@
+# Runtime droppings of an adapter run must never ship: the adapter writes
+# client.log into its working directory, which is the publish tree while
+# debugging from here.
+**/*.log
+tmp/**
+*.vsix
