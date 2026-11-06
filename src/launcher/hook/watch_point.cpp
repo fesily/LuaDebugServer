@@ -5,7 +5,9 @@ namespace luadebug::autoattach {
         return !!address;
     }
     bool watch_point::find_symbol(const lua::resolver& resolver) {
-        address = (void*)resolver.find(funcname);
+        // Exact: a watch point that resolved through a compatibility alias would
+        // hook a launcher thunk that the target never calls.
+        address = (void*)resolver.find_exact(funcname);
         return !!address;
     }
 }

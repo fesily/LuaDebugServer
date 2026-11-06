@@ -237,13 +237,15 @@ namespace {
             "lua_ident", "lua_numbertocstring", "luaL_openselectedlibs", "lua_resetthread",
             "lua_newuserdatauv", "lua_isinteger", "lua_rawlen", "lua_callk",
             "luaL_loadbufferx", "luaJIT_setmode",
-            // launcher watch points
-            "lua_newstate", "lua_close", "luaL_openlibs", "luaD_precall", "luaD_poscall",
-            "luaV_gettable", "luaV_settable", "luaV_finishget", "luaH_finishset",
-            "lj_dispatch_ins", "lj_dispatch_call", "lj_vm_call", "lj_vm_pcall",
-            "lj_vm_cpcall", "lj_vm_resume", "lj_meta_tget", "lj_dispatch_update",
-            "lj_dispatch_stitch",
+            // launcher discovery points, by role
+            "lua_debug_server_newstate", "lua_debug_server_call",
         };
+        // The launcher's discovery points are named by two pseudo symbols, not
+        // by one name per hook: a table must be able to give those two roles,
+        // and must not be able to claim an internal helper.
+        check(!p::symbol_name_known("luaD_precall"), "a watch point is not a table name");
+        check(!p::symbol_name_known("lua_newstate"), "the creation point is not a table name");
+        check(!p::symbol_name_known("luaL_openlibs"), "library setup is not a table name");
         for (const char* name : required) {
             if (!p::symbol_name_known(name)) {
                 std::fprintf(stderr, "FAIL: the whitelist rejects `%s`\n", name);

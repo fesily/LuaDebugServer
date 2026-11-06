@@ -3,6 +3,7 @@
 #include <utility>
 #include <util/log.h>
 
+#include <algorithm>
 #include <cassert>
 #include <map>
 
@@ -113,6 +114,7 @@ namespace luadebug::autoattach {
         , interceptor { Gum::Interceptor_obtain() } {}
 
     watchdog::~watchdog() {
+        stop_discovery_deadline();
         unhook();
     }
 
@@ -124,11 +126,22 @@ namespace luadebug::autoattach {
         // A version's candidate list is a *menu*: an interpreter may hide some of
         // the internal functions (or the build may rename them), so one resolved
         // point is enough to make the module observable.
+        //
+        // Two names can also resolve to one function (`lua_pcall`/`lua_pcallk` in
+        // a compatibility build): `hook()` cannot install the same point twice,
+        // and one listener per address is all that is needed.
         bool any = false;
+        std::vector<void*> seen;
         for (auto& point : points) {
-            if (point.find_symbol(resolver_)) {
-                any = true;
+            if (!point.find_symbol(resolver_)) {
+                continue;
             }
+            if (std::find(seen.begin(), seen.end(), point.address) != seen.end()) {
+                point.address = nullptr;
+                continue;
+            }
+            seen.push_back(point.address);
+            any = true;
         }
         if (any) {
             watch_points = std::move(points);
@@ -145,7 +158,7 @@ namespace luadebug::autoattach {
             bool ok;
             switch (point.listener) {
             case watch_point::type::common:
-                ok = interceptor->attach(point.address, &listener_common, this);
+                ok = interceptor->attach(point.address, point.persistent ? &listener_persistent : &listener_common, this);
                 break;
             case watch_point::type::luajit_global:
                 ok = interceptor->attach(point.address, &listener_luajit_global, this);
@@ -163,6 +176,7 @@ namespace luadebug::autoattach {
                 return false;
             }
         }
+        arm_discovery_deadline();
         return true;
     }
 
@@ -172,9 +186,68 @@ namespace luadebug::autoattach {
             return;
         }
         interceptor->detach(&listener_common);
+        interceptor->detach(&listener_persistent);
         interceptor->detach(&listener_luajit_global);
         interceptor->detach(&listener_luajit_jit);
         interceptor->detach(&listener_ret);
+        hot_points_released = true;
+    }
+
+    void watchdog::arm_discovery_deadline() {
+        if (discovery_thread.joinable()) {
+            return;
+        }
+        discovery_thread = std::thread([this] {
+            std::unique_lock lock(discovery_mtx);
+            if (discovery_cv.wait_for(lock, discovery_window, [this] { return discovery_stopped; })) {
+                return;  // the watchdog is going away
+            }
+            lock.unlock();
+            discovery_deadline_reached();
+        });
+    }
+
+    void watchdog::stop_discovery_deadline() {
+        {
+            std::lock_guard guard(discovery_mtx);
+            discovery_stopped = true;
+        }
+        discovery_cv.notify_all();
+        if (discovery_thread.joinable()) {
+            discovery_thread.join();
+        }
+    }
+
+    void watchdog::release_hot_points() {
+        std::lock_guard guard(mtx);
+        if (!interceptor || hot_points_released) {
+            return;
+        }
+        // `detach(listener)` drops every address that listener was attached to,
+        // so the persistent points have their own instance and survive.
+        interceptor->detach(&listener_common);
+        interceptor->detach(&listener_luajit_global);
+        interceptor->detach(&listener_luajit_jit);
+        hot_points_released = true;
+    }
+
+    void watchdog::discovery_deadline_reached() {
+        bool observed;
+        {
+            std::lock_guard guard(mtx);
+            observed = observed_state;
+        }
+        // The per-call trampolines have done their job; creation and library
+        // setup stay armed so a VM born later is still discovered.
+        release_hot_points();
+        if (!observed) {
+            log::fatal(
+                "no Lua state was seen within {} seconds; only creation entries stay armed",
+                discovery_window.count()
+            );
+            return;
+        }
+        log::info("watchdog: per-call watch points released after {} seconds", discovery_window.count());
     }
 
     void watchdog::install_luahook(lua::state L) {
@@ -213,7 +286,15 @@ namespace luadebug::autoattach {
     }
 
     void watchdog::watch_entry(lua::state L) {
+        // A creation return hook fires even when creation failed: on 64-bit
+        // LuaJIT without GC64 `lua_newstate` is a stub that returns NULL, and a
+        // PUC `lua_newstate` returns NULL when the allocator fails. Installing a
+        // hook on NULL would call the target's `lua_sethook` with a null state.
+        if (!L) {
+            return;
+        }
         std::lock_guard guard(mtx);
+        observed_state = true;
         for (lua::state existing : state_hooked) {
             if (existing == L) {
                 return;

@@ -223,6 +223,14 @@ namespace luadebug {
             scope = all_modules();
         }
 
+        // The launcher's two discovery points are roles scoped to one image: a
+        // process-wide scan could match another library's code and hook it.
+        for (const debugger::SymbolEntry& entry : symbols) {
+            if ((entry.name == "lua_debug_server_newstate" || entry.name == "lua_debug_server_call") && !has_module) {
+                error = "symbol `" + entry.name + "` needs `luaBinary`";
+                return false;
+            }
+        }
         for (const debugger::SymbolEntry& entry : symbols) {
             switch (entry.rule.kind) {
             case debugger::SymbolKind::address:
@@ -255,6 +263,12 @@ namespace luadebug {
             std::vector<std::string> missing;
             std::size_t answered = 0;
             auto fill            = [&](std::string_view name) {
+                // The launcher's two discovery points are roles, not symbols:
+                // an image can never provide them, and reporting them as
+                // "missing" would be noise on every run.
+                if (name == "lua_debug_server_newstate" || name == "lua_debug_server_call") {
+                    return;
+                }
                 const std::string text(name);
                 if (out.entries.find(text) != out.entries.end()) {
                     return;

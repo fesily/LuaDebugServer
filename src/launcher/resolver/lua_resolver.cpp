@@ -35,8 +35,7 @@ namespace luadebug {
         return address;
     }
 
-    intptr_t lua_resolver::find(std::string_view name) const {
-        using namespace std::string_view_literals;
+    intptr_t lua_resolver::find_exact(std::string_view name) const {
         if (external) {
             if (const intptr_t hit = external->find(name)) {
                 return hit;
@@ -46,16 +45,28 @@ namespace luadebug {
             if (auto result = (this->*finder)(name)) {
                 return result;
             }
-            if (name == "lua_pcallk"sv) {
-                _lua_pcall = (decltype(_lua_pcall))(this->*finder)("lua_pcall"sv);
-                if (_lua_pcall) {
-                    return (intptr_t)_lua_pcallk;
-                }
-            } else if (name == "luaL_loadbufferx"sv) {
-                _luaL_loadbuffer = (decltype(_luaL_loadbuffer))(this->*finder)("luaL_loadbuffer"sv);
-                if (_luaL_loadbuffer) {
-                    return (intptr_t)_luaL_loadbufferx;
-                }
+        }
+        return 0;
+    }
+
+    intptr_t lua_resolver::find(std::string_view name) const {
+        using namespace std::string_view_literals;
+        // Exact first: a module that exports the name itself must win over any
+        // compatibility shim.
+        if (const intptr_t hit = find_exact(name)) {
+            return hit;
+        }
+        // Alias fallback, for the bridge's API table only (see `lua_api`): the
+        // returned address is a thunk defined in this launcher, not in the target.
+        if (name == "lua_pcallk"sv) {
+            _lua_pcall = (decltype(_lua_pcall))find_exact("lua_pcall"sv);
+            if (_lua_pcall) {
+                return (intptr_t)_lua_pcallk;
+            }
+        } else if (name == "luaL_loadbufferx"sv) {
+            _luaL_loadbuffer = (decltype(_luaL_loadbuffer))find_exact("luaL_loadbuffer"sv);
+            if (_luaL_loadbuffer) {
+                return (intptr_t)_luaL_loadbufferx;
             }
         }
         return 0;

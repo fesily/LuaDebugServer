@@ -26,5 +26,11 @@ namespace luadebug::lua {
 
     struct resolver {
         virtual intptr_t find(std::string_view name) const = 0;
+        // Same lookup without the compatibility aliases (`lua_pcallk` resolved
+        // through a launcher-local thunk over `lua_pcall`): a watch point must
+        // name a function the target itself exports, or it hooks the launcher.
+        virtual intptr_t find_exact(std::string_view name) const {
+            return find(name);
+        }
     };
 }

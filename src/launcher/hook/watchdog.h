@@ -7,9 +7,12 @@
 #include <resolver/lua_resolver.h>
 
 #include <gumpp.hpp>
+#include <chrono>
+#include <condition_variable>
 #include <map>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace luadebug::autoattach {
@@ -65,6 +68,22 @@ namespace luadebug::autoattach {
         static int luahook_entry(lua::state L);
 
     private:
+        // How long the per-call points stay armed. The narrowed assumption: no
+        // live VM stays unwoken longer than this, so one minute is enough to see
+        // every state in the process, and after it the trampolines only cost.
+        static constexpr std::chrono::seconds discovery_window { 60 };
+
+        // Arms the one-shot deadline. Called once, after the watch is installed.
+        void arm_discovery_deadline();
+        // Stops the deadline thread without waiting for the window (destructor).
+        void stop_discovery_deadline();
+        // The window is over: drop the per-call points, keep the persistent ones
+        // (creation and library setup), and report a failure when no state was
+        // ever seen.
+        void discovery_deadline_reached();
+        // Detaches every point that is not `persistent`.
+        void release_hot_points();
+
         const lua_api& api_;
         const lua_resolver& resolver_;
         // ABI of the module this watchdog belongs to: the bridge handoff needs it
@@ -74,9 +93,19 @@ namespace luadebug::autoattach {
         std::vector<watch_point> watch_points;
         Gum::RefPtr<Gum::Interceptor> interceptor;
         common_listener listener_common;
+        // Persistent common points (library setup) use their own listener so the
+        // deadline can drop the hot ones with `detach(listener)`.
+        common_listener listener_persistent;
         luajit_global_listener listener_luajit_global;
         luajit_jit_listener listener_luajit_jit;
         ret_listener listener_ret;
         std::vector<lua::state> state_hooked;
+        // True once any point produced a state. Set under `mtx`.
+        bool observed_state      = false;
+        bool hot_points_released = false;
+        std::thread discovery_thread;
+        std::mutex discovery_mtx;
+        std::condition_variable discovery_cv;
+        bool discovery_stopped = false;
     };
 }

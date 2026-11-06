@@ -1509,6 +1509,11 @@ def case_vm_source(ctx):
     run_source_refusal(ctx, {"luaSymbols": {"lua_gtetop": {"address": "0x1000"}}},
                        ["lua_gtetop"])
 
+    # A role is scoped to one image: without `luaBinary` there is nothing to
+    # scope it to, so the source is refused instead of scanning every module.
+    run_source_refusal(ctx, {"luaSymbols": {"lua_debug_server_newstate": {"address": "0x1000"}}},
+                       ["lua_debug_server_newstate", "luaBinary"])
+
     # An explicit version the running VM contradicts is a constraint violation,
     # not a hint to be ignored.
     wrong_version = "lua51" if version != "lua51" else "lua52"
@@ -1539,6 +1544,31 @@ def case_vm_source(ctx):
             raise
         print("    injected attach SKIPPED (no ptrace permission): %s"
               % str(exc).splitlines()[0])
+
+    # The launcher's two discovery points can be named by role instead of by a
+    # name per hook: the per-call role finds the running state, the creation
+    # role stays armed for a VM that appears later.
+    # The call role must be a function the running script actually reaches: the
+    # fixture's loop makes Lua calls, not C API calls. `luaD_precall` is that
+    # funnel wherever the image exports it; where it is hidden (5.5, LuaJIT) the
+    # case is skipped rather than made flaky.
+    newstate_rva = nm_image_offset(lua_exe(runtime_root, version), "luaL_newstate")
+    call_rva = nm_image_offset(lua_exe(runtime_root, version), "luaD_precall")
+    if newstate_rva is None or call_rva is None:
+        print("    role-point attach SKIPPED (%s does not export luaL_newstate/luaD_precall)"
+              % version)
+    else:
+        role_symbols = {
+            "lua_debug_server_newstate": {"offset": hex(newstate_rva)},
+            "lua_debug_server_call": {"offset": hex(call_rva)},
+        }
+        try:
+            _vm_source_injected_attach(ctx, runtime_root, version, timeout, role_symbols, directory)
+        except (DAPError, DAPTimeout) as exc:
+            if not _attach_is_privileged_out(str(exc)):
+                raise
+            print("    role-point attach SKIPPED (no ptrace permission): %s"
+                  % str(exc).splitlines()[0])
 
     # --- 5. a source with no injection cannot apply -------------------------
     # An attach by address joins a VM that is already running: nothing injects a
