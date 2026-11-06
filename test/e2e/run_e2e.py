@@ -1392,6 +1392,10 @@ def _vm_source_injected_attach(ctx, runtime_root, version, timeout, symbols, dir
         check(frames and frames[0].get("name") == "step",
               "the injected attach stopped outside step(): %r" % (frames,))
         client.disconnect()
+    except Exception as exc:
+        # The injector's own error is in the DAP reply; what happened to the
+        # target (exit code, stderr) is only visible here.
+        raise CheckError("%s | target %s: %s" % (exc, describe_child(proc), child_output(proc)))
     finally:
         if client is not None:
             client.close()

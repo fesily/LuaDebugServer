@@ -227,6 +227,7 @@ jobs:
           path: |
             test/e2e/stderr.log
             test/e2e/.trace/**
+            publish/client.log
           if-no-files-found: ignore
 
   publish:

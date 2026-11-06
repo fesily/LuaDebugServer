@@ -19,16 +19,25 @@ class DAPError(Exception):
     pass
 
 
+# Adapter logs are appended to one file per suite run: the first client of the
+# process truncates it, later ones append, so a failure mid-suite keeps the log
+# of the adapter run that actually failed (CI uploads this file).
+_STDERR_LOGS_STARTED = set()
+
+
 class DAPTimeout(DAPError):
-    def __init__(self, what, last_request, events, stderr_tail):
+    def __init__(self, what, last_request, events, stderr_tail, adapter_status=None):
         self.what = what
         self.last_request = last_request
         self.events = events
         self.stderr_tail = stderr_tail
+        self.adapter_status = adapter_status
         super().__init__(self._render())
 
     def _render(self):
         lines = ["timeout waiting for %s" % self.what]
+        if self.adapter_status:
+            lines.append("%s" % self.adapter_status)
         if self.last_request is not None:
             lines.append("last request: %s" % _brief(self.last_request))
         lines.append("events received (%d):" % len(self.events))
@@ -56,6 +65,7 @@ class DAPClient:
                  stderr_path=None):
         self.adapter = adapter
         self.stderr_path = stderr_path
+        self._stderr_log = None
         self._seq = 0
         self._write_lock = threading.Lock()
         self._lock = threading.Lock()
@@ -114,6 +124,7 @@ class DAPClient:
         else:
             self._reader_stream = self.proc.stdout
 
+        self._stderr_log = self._open_stderr_log(argv)
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
         self._err_reader = threading.Thread(target=self._stderr_loop, daemon=True)
@@ -121,12 +132,47 @@ class DAPClient:
 
     # ---------------------------------------------------------------- transport
 
+    def _open_stderr_log(self, argv):
+        """Opens `stderr_path` for this adapter run, or None when not requested.
+
+        `stderr_path` used to be remembered but never written, so the CI step that
+        uploads `test/e2e/stderr.log` had nothing to upload and a failed attach
+        left no adapter log behind.
+        """
+        if not self.stderr_path:
+            return None
+        first = self.stderr_path not in _STDERR_LOGS_STARTED
+        try:
+            handle = open(self.stderr_path, "ab" if not first else "wb")
+        except OSError:
+            return None
+        _STDERR_LOGS_STARTED.add(self.stderr_path)
+        handle.write(("=== adapter %s (pid %d) ===\n" % (" ".join(argv), self.proc.pid))
+                     .encode("utf-8"))
+        handle.flush()
+        return handle
+
+    def adapter_status(self):
+        """How the adapter process ended, for a timeout message."""
+        code = self.proc.poll()
+        if code is None:
+            return "adapter still running (pid %d)" % self.proc.pid
+        if code < 0:
+            return "adapter killed by signal %d" % -code
+        return "adapter exited with %d" % code
+
     def _stderr_loop(self):
         for raw in iter(self.proc.stderr.readline, b""):
             line = raw.decode("utf-8", "replace").rstrip("\n")
             self._stderr_lines.append(line)
             if len(self._stderr_lines) > 500:
                 del self._stderr_lines[:100]
+            if self._stderr_log is not None:
+                try:
+                    self._stderr_log.write((line + "\n").encode("utf-8"))
+                    self._stderr_log.flush()
+                except (OSError, ValueError):
+                    self._stderr_log = None
 
     def stderr_tail(self):
         return "\n".join(self._stderr_lines[-40:])
@@ -333,12 +379,13 @@ class DAPClient:
                 if self._closed:
                     raise DAPTimeout("response to seq %r (adapter closed)" % seq,
                                      self._last_request, self._events,
-                                     self.stderr_tail())
+                                     self.stderr_tail(), self.adapter_status())
                 remaining = deadline - time.time()
                 if remaining <= 0:
                     raise DAPTimeout(
                         "response to seq %r" % seq,
-                        self._last_request, self._events, self.stderr_tail())
+                        self._last_request, self._events, self.stderr_tail(),
+                        self.adapter_status())
                 self._resp_cv.wait(remaining)
             return self._responses.pop(seq)
 
@@ -358,11 +405,12 @@ class DAPClient:
                 if remaining <= 0:
                     raise DAPTimeout(
                         "event %s" % (names,),
-                        self._last_request, self._events, self.stderr_tail())
+                        self._last_request, self._events, self.stderr_tail(),
+                        self.adapter_status())
                 if self._closed:
                     raise DAPTimeout("event %s (adapter closed)" % (names,),
                                      self._last_request, self._events,
-                                     self.stderr_tail())
+                                     self.stderr_tail(), self.adapter_status())
                 self._event_cv.wait(remaining)
 
     def event_seen(self, name):
@@ -444,6 +492,12 @@ class DAPClient:
                     stream.close()
                 except Exception:
                     pass
+            if self._stderr_log is not None:
+                try:
+                    self._stderr_log.close()
+                except Exception:
+                    pass
+                self._stderr_log = None
 
     def _kill(self):
         proc = self.proc
