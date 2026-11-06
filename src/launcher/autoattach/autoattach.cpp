@@ -1,7 +1,7 @@
 #include <autoattach/autoattach.h>
 #include <autoattach/ctx.h>
 #include <autoattach/lua_module.h>
-#include <autoattach/wait_dll.h>
+#include <autoattach/wait_module.h>
 #include <fmt/format.h>
 #include <common/vm_version.h>
 #include <resolver/lua_resolver.h>
@@ -113,8 +113,8 @@ namespace luadebug::autoattach {
                 // The named image is not mapped yet: keep the same late-load path
                 // an undiscovered Lua module uses, and retry when it appears.
                 log::info("vm source: {}", error);
-                if (!context->wait_dll && wait_dll(load_lua_module)) {
-                    context->wait_dll = true;
+                if (!context->watching && wait_module(load_lua_module)) {
+                    context->watching = true;
                 }
                 return;
             }
@@ -200,12 +200,12 @@ namespace luadebug::autoattach {
             }
         }
         if (ctx->modules.empty()) {
-            if (ctx->wait_dll)
+            if (ctx->watching)
                 return;
-            if (!wait_dll(load_lua_module)) {
+            if (!wait_module(load_lua_module)) {
                 log::fatal("can't find lua module");
             } else {
-                ctx->wait_dll = true;
+                ctx->watching = true;
             }
             return;
         }
@@ -240,8 +240,11 @@ namespace luadebug::autoattach {
                     break;
                 }
             }
-            if (!prepared && ctx->wait_dll) {
-                // A later image may still arrive; the late-load retry re-runs this.
+            if (!prepared && ctx->watching) {
+                // The image that fired the watch could not be prepared, and a watch
+                // that was consumed reports nothing more: re-arm it so the next image
+                // gets its own chance instead of leaving the process hooked nowhere.
+                wait_module(load_lua_module);
                 return;
             }
             if (!prepared) {
@@ -327,17 +330,43 @@ namespace luadebug::autoattach {
         }
     }
 
+    // Discovery, repeated once when the pass installed the module watch.
+    //
+    // Installing the watch registers - and silently swallows - whatever image maps
+    // while the loader hooks go in, so the pass that installed it cannot be the last
+    // word: this second pass, on the same thread, enumerates what is mapped now. It
+    // must not run on a new thread: the registry holds its own lock while it calls
+    // back into the symbol lookups, so an enumeration that races a `dlopen` on
+    // another thread deadlocks (observed on Linux).
+    static void start_pass() {
+        auto ctx = ctx::get();
+        for (;;) {
+            bool installed = false;
+            {
+                std::lock_guard guard(ctx->mtx);
+                const bool before = ctx->watching;
+                start_impl(ctx);
+                installed = !before && ctx->watching;
+            }
+            if (!installed) {
+                return;
+            }
+        }
+    }
+
     void start(work_mode mode) {
         auto ctx = ctx::get();
-        std::lock_guard guard(ctx->mtx);
-        ctx->mode = mode;
-        start_impl(ctx);
+        {
+            // `mode` is read lock-free elsewhere, so it is published under the lock
+            // before any pass can install a hook.
+            std::lock_guard guard(ctx->mtx);
+            ctx->mode = mode;
+        }
+        start_pass();
     }
 
     void start() {
-        auto ctx = ctx::get();
-        std::lock_guard guard(ctx->mtx);
-        start_impl(ctx);
+        start_pass();
     }
 
     std::once_flag initialize_flag;

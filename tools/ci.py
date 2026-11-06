@@ -114,8 +114,6 @@ def step_build(layout, _args):
 
 
 def step_ctest(layout, _args):
-    # `waitdll` skips itself where `wait_dll()` is unimplemented (Linux), so a
-    # platform gap is reported as "Skipped" instead of failing the run.
     return run(["ctest", "--preset", layout.preset, "--output-on-failure"])
 
 

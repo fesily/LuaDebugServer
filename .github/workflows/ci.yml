@@ -145,8 +145,7 @@ jobs:
         run: python3 tools/ci.py --preset ${{ matrix.preset }} build
       # 46 cases: bridge binding (symbol tables, resolvers, identity, stripped
       # hosts), VM-source rules, hooks, value store, evaluator, session routing,
-      # loader checks. `waitdll` reports itself as skipped on platforms where
-      # `wait_dll()` is unimplemented.
+      # loader checks, and the late-module watcher.
       - name: Native tests
         run: python3 tools/ci.py --preset ${{ matrix.preset }} ctest
       - name: Package the runtime for the e2e stage

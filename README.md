@@ -163,9 +163,11 @@ does not override it.
 * Windows/Linux builds link the Frida core devkit. Linux arm64 has been exercised
   end to end on the current LTS (`linux-arm64-release`, Ubuntu 26.04 LTS as a
   Docker guest on Apple Silicon, LLVM Clang 21, CMake 4.4.5 from upstream because
-  the distro ships 4.2.3): 45/46 native tests and every e2e suite below pass. The one gap is
-  a capability, not a build: `wait_dll` (the "module loads later" watcher) is still
-  unimplemented on Linux, so `waitdll` cannot pass there. The Windows devkit is
+  the distro ships 4.2.3): 46/46 native tests pass. The "module loads later"
+  watcher (`wait_module`) used to be the one platform gap; it is now the Frida
+  module registry, whose loader notifications exist on every platform the launcher
+  targets, so the case is no longer skipped on either platform where the native
+  suite is built (the suite's hosts are POSIX-only). The Windows devkit is
   compiled against the static release CRT, so the adapter and injector objects are
   built with `/MT` even in debug (`cmake/Dependencies.cmake`); a Windows debug
   build that mixes CRT variants fails at link time rather than silently

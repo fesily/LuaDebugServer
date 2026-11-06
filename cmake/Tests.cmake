@@ -14,7 +14,7 @@
 #   test_two_lua_vms      <bridge> [--serve <address> <script a> <script b>]
 #   test_mixed_vm         <bridge> <lib a> <profile a> <lib b> <profile b> [A|B] [join]
 #   test_multi_group_target <lib a> [<lib b>] --dir <dir> [--load-second]
-#   testwaitdll           <launcher> <shared lua dso> <bootstrap json or "-">
+#   test_wait_module      <launcher> <shared lua dso> <bootstrap json or "-">
 #   test_load             <library> [<library> ...]
 
 include_guard(GLOBAL)
@@ -261,10 +261,10 @@ _lua_debug_test_target(test_thunk
     INCLUDES "${_luadebug_src}" "${_lua54}" ${_third_party}
     DEFINES ${_lua_lua54_defines})
 
-_lua_debug_test_target(testwaitdll
-    SOURCES "${LUA_DEBUG_SOURCE_DIR}/test/waitdll.cpp"
+_lua_debug_test_target(test_wait_module
+    SOURCES "${LUA_DEBUG_SOURCE_DIR}/test/wait_module.cpp"
     INCLUDES "${LUA_DEBUG_THIRD_PARTY_DIR}/lua/lua51")
-target_link_libraries(testwaitdll PRIVATE dl)
+target_link_libraries(test_wait_module PRIVATE dl)
 
 lua_debug_add_gumpp()
 _lua_debug_test_target(test_frida
@@ -413,13 +413,13 @@ _lua_debug_add_test(mixed_vm_same_group COMMAND test_mixed_vm
 # `test_multi_group_target` is an e2e driver host (it runs until a `stop` file
 # appears), so it is built but not registered here.
 
-_lua_debug_add_test(waitdll COMMAND testwaitdll
+_lua_debug_add_test(wait_module COMMAND test_wait_module
     "${LUA_DEBUG_LIB_DIR}/launcher${LUA_DEBUG_MODULE_SUFFIX}"
     "${LUA_DEBUG_TEST_BIN_DIR}/test_lua_lua51${LUA_DEBUG_MODULE_SUFFIX}"
     "-")
-# The test skips itself (77) where `wait_dll()` is unimplemented, e.g. Linux: the
-# capability is a known gap, and reporting it as a failure would mask real ones.
-set_tests_properties(waitdll PROPERTIES SKIP_RETURN_CODE 77)
+# The watcher is the frida module registry, whose loader notifications exist on
+# every platform the launcher targets, so this case is not skipped on Linux or
+# macOS (the only platforms whose native suite is built: these hosts are POSIX).
 
 # In-process load checks: the runtime library alone, then every shared
 # interpreter together with the one bridge.
@@ -437,7 +437,7 @@ endforeach()
 add_test(NAME artifacts_built COMMAND ${CMAKE_COMMAND} -E true)
 set_tests_properties(artifacts_built PROPERTIES FIXTURES_SETUP built_artifacts)
 set_tests_properties(
-    two_bridges two_lua_vms waitdll load_runtime
+    two_bridges two_lua_vms wait_module load_runtime
     mixed_vm_lua51_lua54_A mixed_vm_lua51_lua54_B mixed_vm_luajit_lua54
     mixed_vm_same_group
     PROPERTIES FIXTURES_REQUIRED built_artifacts)

@@ -29,8 +29,10 @@ namespace luadebug::autoattach {
         // groups and no selection, or an unknown configured version). The decision
         // is final for the process: every later entry point must return without
         // re-running discovery, and no hook may stay installed.
-        bool refused  = false;
-        bool wait_dll = false;
+        bool refused = false;
+        // The module-load watcher is installed: a Lua image mapped later re-enters
+        // discovery from the watcher's worker thread.
+        bool watching = false;
 
         // Immutable bootstrap snapshot, published by the injection entry before
         // any hook is installed. Every VM (the first one and any later one) reads
