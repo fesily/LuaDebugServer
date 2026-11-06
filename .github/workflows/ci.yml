@@ -195,9 +195,11 @@ jobs:
           sudo sysctl -w kernel.yama.ptrace_scope=0 \
             || echo "ptrace scope left unchanged; the privileged suites will report it"
 
-      # Pure suites debug a target the adapter starts itself: baseline, core,
-      # two-sources and vm-source (console RVA rule, terminal carrier, symbols
-      # file, injected pid attach, five refusals) on all seven interpreters.
+      # Pure suites debug a target the adapter starts itself: baseline,
+      # coroutine (per-thread hook masks), core, two-sources, late-breakpoint
+      # (prototype classification) and vm-source (console RVA rule, terminal
+      # carrier, symbols file, injected pid attach, five refusals) on all seven
+      # interpreters.
       - name: e2e - pure suites
         run: python3 tools/ci.py --preset ${{ matrix.preset }} e2e-pure
       # full-surface (exception stops) and multi-VM (two ABI groups in one process).

@@ -485,11 +485,10 @@ namespace luadebug::worker {
         return 0;
     }
 
-    bool WorkerSession::new_proto(vm::State* L, void* proto, bool is_return) {
+    bool WorkerSession::new_proto(vm::State* L, void* proto, int level) {
         // The old worker asked the target for the function's line range; do the
         // same here, then decide from our own breakpoint table.
         vm::FrameInfo ar;
-        const int level = is_return ? 1 : 0;
         if (!L->getstack(level, &ar) || !L->getinfo("S", &ar)) {
             return false;
         }
@@ -671,7 +670,16 @@ namespace luadebug::worker {
     }
 
     void WorkerSession::line_stop(vm::State* L, bool stepping, int line, void* proto) {
-        (void)proto;
+        // The line mask is state-wide (hook::Core::break_open), so line events for
+        // every prototype arrive here. A prototype already classified as holding
+        // no breakpoint can neither stop nor emit a logpoint, so skip the source
+        // lookup and the table scan for it. The classification is made from the
+        // frame its call hook reports; a call that never reaches the hook (a
+        // LuaJIT trace, a C function) leaves the prototype unclassified, and an
+        // unclassified prototype always takes the full path.
+        if (!stepping && proto && hooks_ && hooks_->core && !hooks_->core->proto_wants_line_events(proto)) {
+            return;
+        }
         const std::string source = current_source(L);
         std::string log_output;
         const int breakpoint_id = breakpoint_at_line(L, source, line, log_output);
@@ -2114,16 +2122,25 @@ namespace luadebug::worker {
             breakpoints_.insert(breakpoints_.end(), entry.second.begin(), entry.second.end());
         }
 
-        // Arm the call/return hook so prototypes get discovered; the line hook
-        // is then enabled per prototype from new_proto().
+        // A cached per-prototype decision was derived from the old table.
+        if (hooks_ && hooks_->core) {
+            hooks_->core->break_reset();
+        }
+
+        // Arm the call/return hook so prototypes get discovered; the line hook is
+        // then enabled per prototype and per state from the decisions the hook
+        // produces. The state to arm is the one that will run next: a breakpoint
+        // set while stopped inside a coroutine must reach that coroutine's own
+        // mask, and no resume event will come to repair it later.
         if (hooks_ && hooks_->core && target_) {
             bool any_verified = false;
             for (const auto& bp : breakpoints_) {
                 any_verified = any_verified || bp.verified;
             }
-            hooks_->core->break_open(target_, any_verified);
+            vm::State* state = frame_state();
+            hooks_->core->break_open(state, any_verified);
             if (any_verified) {
-                hooks_->core->update_open(target_, true);
+                hooks_->core->update_open(state, true);
             }
         }
     }

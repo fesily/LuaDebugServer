@@ -35,7 +35,17 @@ namespace luadebug::hook {
         void break_del(vm::State* L, void* proto);
         void break_freeobj(void* proto);
         void break_open(vm::State* L, bool enable);
-        void break_closeline(vm::State* L);
+
+        // Forgets every cached per-prototype classification. The classification
+        // is derived from the breakpoint table, so it must not survive a change
+        // to it.
+        void break_reset();
+
+        // False only for a prototype that was already classified as having no
+        // breakpoint in its line range. Unclassified prototypes answer true: the
+        // caller must take the full path, so a stale or missing decision can only
+        // cost work, never a missed stop.
+        bool proto_wants_line_events(void* proto) const;
 
         // Function breakpoints (call hook).
         void funcbp_open(vm::State* L, bool enable);
@@ -59,7 +69,6 @@ namespace luadebug::hook {
 
         // Coroutine tracking hooks, where the target supports them.
         void thread_open(vm::State* L, bool enable);
-        vm::State* coroutine_from(vm::State* co);
 
         // Recomputes the trap mask of one state (used after host switches).
         void updatehookmask(vm::State* hL);

@@ -423,6 +423,110 @@ def case_two_sources(ctx):
         client.close()
 
 
+def case_late_breakpoint(ctx):
+    """A line breakpoint added to a function that has already run.
+
+    The session classifies a prototype on its first call and skips its line
+    events from then on, so the classification has to be dropped whenever the
+    breakpoint table changes. The stop inside `target` proves it was; the 100
+    iterations of `plain` that run in between prove the skip does not swallow a
+    later breakpoint on any backend - including LuaJIT, where a C call never
+    reports a return hook and only a count or line event closes the frame.
+    """
+    runtime_root, version, timeout = ctx["runtime_root"], ctx["version"], ctx["timeout"]
+    path = source_path("late_breakpoint.lua")
+    client = DAPClient(ctx["adapter"], cwd=FIXTURES,
+                       stderr_path=os.path.join(HERE, "stderr.log"))
+    try:
+        session = Session(client, timeout)
+        trace = trace_path(version, "late-breakpoint")
+        if os.path.exists(trace):
+            os.remove(trace)
+        session.trace = trace
+        client.initialize(timeout=timeout)
+        session.request("launch", launch_arguments(runtime_root, version,
+                                                   "late_breakpoint.lua",
+                                                   trace=trace,
+                                                   extra={"stopOnEntry": False}))
+        client.wait_event("initialized", timeout=timeout)
+        set_breakpoints(session, path, [22])
+        session.request("configurationDone")
+
+        # `target` already ran once (line 21) with no breakpoint in its range, so
+        # its prototype is classified as uninteresting by now.
+        stop = wait_for_breakpoint_stop(session, timeout)
+        thread_id = stop["threadId"]
+        frames = session.stack_frames(thread_id)
+        check(stop.get("reason") == "breakpoint" and frames[0].get("line") == 22,
+              "first stop is not the breakpoint on line 22: %r" % (stop,))
+
+        # Step into `plain` so the running frame belongs to a prototype with no
+        # breakpoint in its range. A breakpoint added further down the same
+        # function then depends on the stack walk at setBreakpoints: no call or
+        # return will classify that frame again.
+        session.request("stepIn", {"threadId": thread_id})
+        session.stopped()
+        frames = session.stack_frames(thread_id)
+        check(frames[0].get("name") == "plain" and frames[0].get("line") == 10,
+              "stepIn did not enter plain(): %r" % (frames[:1],))
+        set_breakpoints(session, path, [14])
+        session.request("continue", {"threadId": thread_id})
+        stop = session.stopped()
+        frames = session.stack_frames(thread_id)
+        check(stop.get("reason") == "breakpoint", "running-frame breakpoint did not stop: %r" % (stop,))
+        check(frames[0].get("line") == 14,
+              "running-frame breakpoint stopped at line %r" % frames[0].get("line"))
+
+        # A breakpoint inside an already-run function that is reached again: here
+        # the call event does the classification, and a stale one would swallow it.
+        set_breakpoints(session, path, [18])
+        session.request("continue", {"threadId": thread_id})
+        stop = session.stopped()
+        check(stop.get("reason") == "breakpoint",
+              "breakpoint inside an already-run function did not stop: %r" % (stop,))
+        frames = session.stack_frames(thread_id)
+        check(frames[0].get("line") == 18,
+              "late breakpoint stopped at line %r" % frames[0].get("line"))
+        check(frames[0].get("name") == "target",
+              "late breakpoint stopped in %r" % frames[0].get("name"))
+
+        # The same shape on a state of its own. A function breakpoint stops the
+        # coroutine while `plain` holds no line breakpoint, so the coroutine's
+        # line mask is closed; adding the line breakpoint then has to reach that
+        # coroutine's own mask - the state that is stopped, not the target the
+        # session started with.
+        #
+        # A function breakpoint is the only way to stop inside a frame whose
+        # prototype holds no line breakpoint without stepping. LuaJIT's call hook
+        # reports no call-site name, so it cannot match a function breakpoint
+        # (the `full` suite skips it for the same reason).
+        if version != "luajit":
+            session.request("setFunctionBreakpoints",
+                            {"breakpoints": [{"name": "plain"}]})
+            session.request("continue", {"threadId": thread_id})
+            stop = session.stopped()
+            check(stop.get("reason") in ("breakpoint", "function breakpoint"),
+                  "the function breakpoint in the coroutine did not stop: %r" % (stop,))
+            frames = session.stack_frames(thread_id)
+            check(frames[0].get("line") == 10,
+                  "the function breakpoint stopped at line %r" % frames[0].get("line"))
+            session.request("setFunctionBreakpoints", {"breakpoints": []})
+            set_breakpoints(session, path, [14])
+            session.request("continue", {"threadId": thread_id})
+            stop = session.stopped()
+            frames = session.stack_frames(thread_id)
+            check(stop.get("reason") == "breakpoint",
+                  "breakpoint added on a stopped coroutine did not stop: %r" % (stop,))
+            check(frames[0].get("line") == 14,
+                  "coroutine breakpoint stopped at line %r" % frames[0].get("line"))
+
+        continue_until_terminated(session, thread_id)
+        check(read_trace(trace) == ["work=5060", "second=5061", "co=5051", "done"],
+              "target did not execute as expected, trace=%r" % (read_trace(trace),))
+    finally:
+        client.close()
+
+
 def case_core(ctx):
     runtime_root, version, timeout = ctx["runtime_root"], ctx["version"], ctx["timeout"]
     client = DAPClient(ctx["adapter"], cwd=FIXTURES,
@@ -1596,6 +1700,7 @@ SUITES = {
     "coroutine": case_coroutine,
     "core": case_core,
     "two-sources": case_two_sources,
+    "late-breakpoint": case_late_breakpoint,
     "full": case_full,
     "mixed-vm": case_mixed_vm,
     "attach": case_attach,

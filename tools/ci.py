@@ -45,7 +45,7 @@ ALL_VERSIONS = "lua51,lua52,lua53,lua54,lua55,luajit,lua-latest"
 # `full` stops on raised errors (5.2+ only) and `mixed-vm` drives multi-ABI hosts;
 # both are meaningful on this subset.
 SURFACE_VERSIONS = "lua51,lua54,luajit,lua55,lua-latest"
-PURE_SUITES = ("baseline", "core", "two-sources", "vm-source")
+PURE_SUITES = ("baseline", "coroutine", "core", "two-sources", "late-breakpoint", "vm-source")
 SURFACE_SUITES = ("full", "mixed-vm")
 PRIVILEGED_SUITES = ("attach", "inject-config")
 

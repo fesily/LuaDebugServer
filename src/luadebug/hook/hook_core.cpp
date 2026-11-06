@@ -46,16 +46,19 @@ namespace luadebug::hook {
                 Ignore,
             };
 
+            // A classification belongs to the breakpoint table it was derived
+            // from: `renew()` (a table change) makes every old answer `None`
+            // without walking the map.
             void set(void* proto, status status) noexcept {
                 switch (status) {
                 case status::None:
                     m_flatmap.erase(proto);
                     break;
                 case status::Break:
-                    m_flatmap.insert_or_assign(proto, true);
+                    m_flatmap.insert_or_assign(proto, entry { status::Break, m_generation });
                     break;
                 case status::Ignore:
-                    m_flatmap.insert_or_assign(proto, false);
+                    m_flatmap.insert_or_assign(proto, entry { status::Ignore, m_generation });
                     break;
                 default:
                     std::unreachable();
@@ -64,14 +67,33 @@ namespace luadebug::hook {
 
             status get(void* proto) const noexcept {
                 auto it = m_flatmap.find(proto);
-                if (it != m_flatmap.end()) {
-                    return it->second ? status::Break : status::Ignore;
+                if (it == m_flatmap.end() || it->second.generation != m_generation) {
+                    return status::None;
                 }
-                return status::None;
+                return it->second.state;
+            }
+
+            void renew() noexcept {
+                if (++m_generation == 0) {
+                    // Wrapped: the generation is only a token, so start the map
+                    // over rather than let an old entry match again.
+                    m_flatmap.clear();
+                    m_generation = 1;
+                }
+            }
+
+            void clear() noexcept {
+                m_flatmap.clear();
             }
 
         private:
-            boost::unordered_flat_map<void*, bool> m_flatmap;
+            struct entry {
+                status state        = status::None;
+                unsigned generation = 0;
+            };
+
+            boost::unordered_flat_map<void*, entry> m_flatmap;
+            unsigned m_generation = 1;
         };
 
         struct THUNK_MGR_T {};
@@ -84,7 +106,23 @@ namespace luadebug::hook {
         // break
         //
         bpmap break_proto;
-        unsigned break_mask = 0;
+
+        // True while the table holds a verified breakpoint.
+        bool break_active = false;
+        // The line hook can only be narrowed where a thread's mask can be
+        // repaired when that thread enters the CPU: 5.2+ report resume through the
+        // patched VM, LuaJIT keeps one mask for the whole VM and 5.1 cannot report
+        // a coroutine at all, so both keep the line bit on.
+        bool narrow = false;
+
+        static constexpr unsigned kBreakClosed = vm::mask::call | vm::mask::ret;
+        static constexpr unsigned kBreakOpen   = kBreakClosed | vm::mask::line;
+
+        // Breakpoint part of one state's mask, for targets that narrow. Only a
+        // `Break` decision is stored: a state with no entry is either undecided
+        // (and gets the closed mask, which still reports the calls that decide it)
+        // or holds no breakpoint at all.
+        boost::unordered_flat_map<vm::State*, unsigned> break_masks;
 
         void break_add(vm::State* hL, void* p) {
             break_proto.set(p, bpmap::status::Break);
@@ -95,31 +133,89 @@ namespace luadebug::hook {
         void break_freeobj(void* p) {
             break_proto.set(p, bpmap::status::None);
         }
-        // While breakpoints exist the line mask stays on. Arming per prototype is an
-        // optimization that depends on seeing a call (or the matching return) for
-        // that prototype; a chunk that was already on the stack when the debugger
-        // attached (the debuggee's main chunk in launch mode) never produces one, so
-        // its breakpoints would silently never fire.
-        bool line_always = false;
-        void break_open(vm::State* hL, bool enable) {
-            line_always = enable;
-            if (enable) {
-                break_update(hL, hL->callinfo(), vm::event::call);
-            } else {
-                break_hookmask(hL, 0);
+        // Breakpoint tables change; a classification is only valid for the table
+        // it was derived from. An unknown prototype is treated as armed by
+        // proto_wants_line_events and as closed by break_part, so the renew is safe
+        // even for the frame that is running right now.
+        void break_reset() {
+            break_proto.renew();
+        }
+        bool proto_wants_line_events(void* p) const {
+            return break_proto.get(p) != bpmap::status::Ignore;
+        }
+
+        unsigned break_part(vm::State* hL) const {
+            if (!break_active) {
+                return 0;
             }
+            if (!narrow) {
+                return kBreakOpen;
+            }
+            auto it = break_masks.find(hL);
+            return it == break_masks.end() ? kBreakClosed : it->second;
         }
-        void break_openline(vm::State* hL) {
-            break_hookmask(hL, vm::mask::call | vm::mask::ret | vm::mask::line);
-        }
-        void break_closeline(vm::State* hL) {
-            if (line_always) {
-                break_hookmask(hL, vm::mask::call | vm::mask::ret | vm::mask::line);
+        void set_break_part(vm::State* hL, bool wanted) {
+            if (!narrow) {
                 return;
             }
-            break_hookmask(hL, vm::mask::call | vm::mask::ret);
+            const unsigned want = wanted ? kBreakOpen : kBreakClosed;
+            auto it             = break_masks.find(hL);
+            const unsigned now  = it == break_masks.end() ? kBreakClosed : it->second;
+            if (now == want) {
+                return;
+            }
+            if (want == kBreakOpen) {
+                break_masks.insert_or_assign(hL, want);
+            } else {
+                break_masks.erase(hL);
+            }
+            updatehookmask(hL);
         }
-        bool break_new(vm::State* hL, void* p, int event) {
+
+        void break_open(vm::State* hL, bool enable) {
+            break_active = enable;
+            narrow       = !is_luajit && hL->vm()->api().has_thread_hook();
+            if (!enable) {
+                // No verified breakpoint: neither the classification nor the
+                // recorded masks mean anything. States cannot be enumerated, so
+                // each one is corrected the next time it is installed.
+                break_masks.clear();
+                updatehookmask(hL);
+                return;
+            }
+            // A frame that is already running never produces a call event again -
+            // the debuggee's main chunk in launch mode, or whatever the target was
+            // doing when the debugger attached. Classify the whole stack now and
+            // take this state's mask from the innermost frame.
+            break_seed(hL);
+            vm::State* mainL = hL->mainthread();
+            if (mainL && mainL != hL) {
+                break_seed(mainL);
+            }
+            updatehookmask(hL);
+        }
+        // Classifies every frame of `hL` and records the mask its innermost frame
+        // needs.
+        void break_seed(vm::State* hL) {
+            bool innermost = false;
+            for (int level = 0;; ++level) {
+                vm::FrameInfo ar;
+                if (!hL->getstack(level, &ar)) {
+                    break;
+                }
+                void* ci = hL->debug2ci(&ar);
+                void* p  = ci ? hL->ci2proto(ci) : nullptr;
+                if (!p) {
+                    continue;
+                }
+                const bool wanted = break_has(hL, p, level);
+                if (level == 0) {
+                    innermost = wanted;
+                }
+            }
+            set_break_part(hL, innermost);
+        }
+        bool break_new(vm::State* hL, void* p, int level) {
             break_del(hL, p);
 
             if (!sink_) {
@@ -128,25 +224,26 @@ namespace luadebug::hook {
             // The consumer registers the prototype through break_add/break_del as a
             // side effect; the decision is read back from the map, exactly like the
             // pre-refactor flow (the callback's return value is not the decision).
-            sink_->new_proto(hL, p, event == vm::event::ret);
+            sink_->new_proto(hL, p, level);
             return break_proto.get(p) == bpmap::status::Break;
         }
-        bool break_has(vm::State* hL, void* p, int event) {
+        // `level` is the stack level of `p`'s own frame: 0 for a call event, 1 for
+        // the frame that just returned, and the walked level for the seed.
+        bool break_has(vm::State* hL, void* p, int level) {
             if (!p) {
                 return false;
             }
             auto status = break_proto.get(p);
             if (status == bpmap::status::None) {
-                return break_new(hL, p, event);
+                return break_new(hL, p, level);
             }
             return status == bpmap::status::Break;
         }
         void break_update(vm::State* hL, void* ci, int event) {
-            if (break_has(hL, hL->ci2proto(ci), event)) {
-                break_openline(hL);
-            } else {
-                break_closeline(hL);
-            }
+            void* p           = hL->ci2proto(ci);
+            const int level   = event == vm::event::ret ? 1 : 0;
+            const bool wanted = break_has(hL, p, level);
+            set_break_part(hL, wanted);
         }
         void break_hook_call(vm::State* hL, const vm::HookInfo& ar) {
             void* ci = nullptr;
@@ -171,12 +268,6 @@ namespace luadebug::hook {
                 return;
             }
             break_update(hL, hL->debug2ci(&outer), ar.event);
-        }
-        void break_hookmask(vm::State* hL, unsigned mask) {
-            if (break_mask != mask) {
-                break_mask = mask;
-                updatehookmask(hL);
-            }
         }
 
         //
@@ -307,7 +398,6 @@ namespace luadebug::hook {
         // thread
         //
         unsigned thread_mask = 0;
-        boost::unordered_flat_map<vm::State*, vm::State*> coroutine_tree;
         void thread_hookmask(vm::State* hL, unsigned mask) {
             if (thread_mask != mask) {
                 thread_mask = mask;
@@ -318,23 +408,17 @@ namespace luadebug::hook {
             thread_hookmask(hL, enable ? vm::mask::thread : 0);
         }
         void thread_hook(vm::State* co, const vm::HookInfo& ar) {
-            vm::State* from = static_cast<vm::State*>(co->touserdata(-1));
-            if (from) {
-                int type = ar.currentline;
-                if (type == 0) {
-                    coroutine_tree.insert_or_assign(co, from);
-                } else if (type == 1) {
-                    coroutine_tree.erase(from);
-                }
-            }
+            (void)ar;  // only the event type matters, and the mask is per state
+            // type 0: `co` is the coroutine entering the CPU (the resumer is the
+            // light userdata on its stack). type 1: `co` is the resumer and the
+            // coroutine is returning, whose own mask is of no further use.
+            //
+            // A resuming coroutine carries the mask it inherited when it was
+            // created, so the mask is installed here to give it the call/return
+            // events that classify its body: at this point the body's frame is not
+            // pushed yet, so there is no prototype to decide, and the call hook is
+            // what reaches it.
             updatehookmask(co);
-        }
-        vm::State* coroutine_from(vm::State* co) {
-            auto it = coroutine_tree.find(co);
-            if (it == coroutine_tree.end()) {
-                return nullptr;
-            }
-            return it->second;
         }
 
         //
@@ -358,8 +442,9 @@ namespace luadebug::hook {
                     thread_mask &= (~vm::mask::thread);
                     updatehookmask(hL);
                     last_hook_call_in_c = false;
-                    if (break_mask)
+                    if (break_active) {
                         break_hook_call(hL, ar);
+                    }
                 }
                 if (is_luajit) {
                     if (stepL == hL) {
@@ -367,7 +452,7 @@ namespace luadebug::hook {
                             step_hook_line(hL, ar);
                         }
                     }
-                    if (!((step_mask & vm::mask::line) && (!stepL || stepL == hL)) && !(break_mask & vm::mask::line)) {
+                    if (!((step_mask & vm::mask::line) && (!stepL || stepL == hL)) && !(break_part(hL) & vm::mask::line)) {
                         return;
                     }
                 }
@@ -377,7 +462,7 @@ namespace luadebug::hook {
                 if (funcbp_mask) {
                     funcbp_hook(hL, ar);
                 }
-                if (break_mask & vm::mask::call) {
+                if (break_active) {
                     break_hook_call(hL, ar);
                 }
                 if (stepL == hL) {
@@ -402,7 +487,7 @@ namespace luadebug::hook {
                 if (update_mask) {
                     update_hook(hL);
                 }
-                if (break_mask & vm::mask::ret) {
+                if (break_active) {
                     break_hook_return(hL, ar);
                 }
                 if (stepL == hL) {
@@ -464,20 +549,22 @@ namespace luadebug::hook {
             }
         }
 
-        void sethook(vm::State* hL, vm::HookFn func, unsigned mask, int count) {
-            hL->sethook(func, mask, count);
-            // LuaJIT keeps hook state in the global state, so one call covers every
-            // thread; the 5.x family stores it per thread and needs both.
+        void updatehookmask(vm::State* hL) {
+            install(hL);
+            // 5.x keeps the mask per state, so a state that is not the current one
+            // needs its own install - and its own breakpoint part, never this
+            // state's. LuaJIT keeps one mask for the whole VM, where a single call
+            // covers every thread.
             if (!is_luajit) {
                 vm::State* mainL = hL->mainthread();
                 if (mainL && mainL != hL) {
-                    mainL->sethook(func, mask, count);
+                    install(mainL);
                 }
             }
         }
 
-        void updatehookmask(vm::State* hL) {
-            int mask = break_mask | funcbp_mask;
+        void install(vm::State* hL) {
+            unsigned mask = break_part(hL) | funcbp_mask;
             if (!stepL || stepL == hL) {
                 mask |= step_mask;
             }
@@ -486,15 +573,24 @@ namespace luadebug::hook {
                 mask |= vm::mask::count;
                 count = 1;
             }
+            unsigned trap   = 0;
+            vm::HookFn func = nullptr;
             if (mask) {
-                sethook(hL, reinterpret_cast<vm::HookFn>(sc_full_hook->data), mask | exception_mask | thread_mask, count);
+                trap = mask | exception_mask | thread_mask;
+                func = reinterpret_cast<vm::HookFn>(sc_full_hook->data);
             } else if (update_mask) {
-                sethook(hL, reinterpret_cast<vm::HookFn>(sc_idle_hook->data), update_mask | exception_mask | thread_mask, 0xfffff);
+                trap  = update_mask | exception_mask | thread_mask;
+                count = 0xfffff;
+                func  = reinterpret_cast<vm::HookFn>(sc_idle_hook->data);
             } else if (exception_mask | thread_mask) {
-                sethook(hL, reinterpret_cast<vm::HookFn>(sc_idle_hook->data), exception_mask | thread_mask, 0);
-            } else {
-                sethook(hL, nullptr, 0, 0);
+                trap = exception_mask | thread_mask;
+                func = reinterpret_cast<vm::HookFn>(sc_idle_hook->data);
             }
+            // Every caller decides whether the trap set changed, so this always
+            // writes. Reading the target's own mask back is not a substitute: a
+            // launcher can leave a hook with the same mask but a foreign entry,
+            // and skipping the install would leave that entry in place.
+            hL->sethook(func, trap, count);
         }
 
         unsigned update_mask = 0;
@@ -649,11 +745,14 @@ namespace luadebug::hook {
     void Core::break_freeobj(void* proto) {
         impl_->break_freeobj(proto);
     }
+    void Core::break_reset() {
+        impl_->break_reset();
+    }
+    bool Core::proto_wants_line_events(void* proto) const {
+        return impl_->proto_wants_line_events(proto);
+    }
     void Core::break_open(vm::State* L, bool enable) {
         impl_->break_open(L, enable);
-    }
-    void Core::break_closeline(vm::State* L) {
-        impl_->break_closeline(L);
     }
     void Core::funcbp_open(vm::State* L, bool enable) {
         impl_->funcbp_open(L, enable);
@@ -707,12 +806,6 @@ namespace luadebug::hook {
         if (L && L->vm()->api().has_thread_hook()) {
             impl_->thread_open(L, enable);
         }
-    }
-    vm::State* Core::coroutine_from(vm::State* co) {
-        if (!co || !co->vm()->api().has_thread_hook()) {
-            return nullptr;
-        }
-        return impl_->coroutine_from(co);
     }
     void Core::updatehookmask(vm::State* hL) {
         impl_->updatehookmask(hL);

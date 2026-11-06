@@ -93,7 +93,7 @@ namespace luadebug::worker {
         void set_idle_pump(std::function<void()> pump);
 
         // --- hook::Sink -------------------------------------------------------
-        bool new_proto(vm::State* L, void* proto, bool is_return) override;
+        bool new_proto(vm::State* L, void* proto, int level) override;
         void function_break(vm::State* L) override;
         void instruction_break(vm::State* L, void* proto) override;
         void exception(vm::State* L, int errcode) override;

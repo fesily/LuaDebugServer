@@ -23,9 +23,11 @@ namespace luadebug::hook {
     struct Sink {
         virtual ~Sink() = default;
 
-        // A prototype is seen for the first time. `is_return` distinguishes the
-        // return-hook case. Return true when the prototype needs line hooks.
-        virtual bool new_proto(vm::State* L, void* proto, bool is_return) = 0;
+        // A prototype is seen for the first time. `level` is the stack level of
+        // the prototype's own frame: 0 for a call event, 1 when it just returned,
+        // and the walked level when the whole stack is classified at attach.
+        // Return true when the prototype needs line hooks.
+        virtual bool new_proto(vm::State* L, void* proto, int level) = 0;
 
         // A call hook fired (function breakpoints).
         virtual void function_break(vm::State* L) = 0;
