@@ -247,6 +247,13 @@ LJ_TEST_ARCH_VALUE(LJ_HASFFI 1)
 IF(LJ_HASFFI_1)
   SET(DASM_FLAGS ${DASM_FLAGS} -D FFI)
 ENDIF()
+# The coroutine hook has a DynASM gate in the VM backends (`.if COROHOOK`);
+# without the define the C side compiles the hook in and the fast path never
+# reports a switch.
+LJ_TEST_ARCH_VALUE(LJ_HASCOROHOOK 1)
+IF(LJ_HASCOROHOOK_1)
+  SET(DASM_FLAGS ${DASM_FLAGS} -D COROHOOK)
+ENDIF()
 LJ_TEST_ARCH_VALUE(LJ_DUALNUM 1)
 IF(LJ_DUALNUM_1)
   SET(DASM_FLAGS ${DASM_FLAGS} -D DUALNUM)
